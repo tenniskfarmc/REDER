@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>קורא צ'יפים GIGATEK</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: Arial, sans-serif; background: #f0f2f5; color: #222; padding: 24px; direction: rtl; }
+
+h1 { font-size: 20px; font-weight: bold; margin-bottom: 20px; }
+
+.card {
+  background: #fff; border-radius: 12px; border: 1px solid #e5e5e5;
+  padding: 20px; margin-bottom: 16px;
+}
+
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+select, input[type=text] {
+  padding: 9px 12px; border: 1px solid #ddd; border-radius: 8px;
+  font-size: 14px; background: #fff; color: #222; min-width: 180px;
+}
+
+button {
+  padding: 9px 18px; border: 1px solid #ddd; border-radius: 8px;
+  font-size: 14px; cursor: pointer; background: #fff; color: #222;
+}
+button:hover { background: #f5f5f5; }
+button.primary { background: #16a34a; color: #fff; border-color: #16a34a; }
+button.primary:hover { background: #15803d; }
+button.danger { color: #dc2626; border-color: #fca5a5; }
+button.danger:hover { background: #fef2f2; }
+
+.status-dot { width: 11px; height: 11px; border-radius: 50%; background: #f59e0b; flex-shrink: 0; }
+.status-dot.connected { background: #22c55e; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+.stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 16px; }
+.stat { background: #f9fafb; border: 1px solid #eee; border-radius: 8px; padding: 14px 16px; }
+.stat-label { font-size: 12px; color: #888; margin-bottom: 4px; }
+.stat-val { font-size: 24px; font-weight: bold; }
+
+.scan-banner {
+  background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px;
+  padding: 16px 20px; margin-bottom: 16px; display: flex; align-items: center; gap: 14px;
+}
+.scan-banner .icon { font-size: 32px; }
+.scan-code { font-family: monospace; font-size: 28px; font-weight: bold; color: #16a34a; letter-spacing: 0.1em; }
+.scan-code.flash { animation: flashCode 0.4s ease; }
+@keyframes flashCode { 0%{color:#dcfce7} 50%{color:#16a34a} 100%{color:#16a34a} }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: right; padding: 10px 14px; background: #f9fafb; color: #666; font-weight: 600; border-bottom: 1px solid #eee; }
+td { padding: 10px 14px; border-bottom: 1px solid #f3f4f6; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #fafafa; }
+.badge { background: #dbeafe; color: #1d4ed8; font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 6px; }
+.empty { text-align: center; padding: 32px; color: #bbb; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<h1>📡 קורא צ'יפים GIGATEK</h1>
+
+<!-- חיבור -->
+<div class="card">
+  <div class="row">
+    <div class="status-dot" id="dot"></div>
+    <select id="port-select"><option value="">טוען פורטים...</option></select>
+    <button onclick="loadPorts()">🔄 רענן</button>
+    <button class="primary" onclick="connect()">התחבר</button>
+    <span id="conn-status" style="font-size:13px;color:#888;">לא מחובר</span>
+  </div>
+</div>
+
+<!-- סטטיסטיקה -->
+<div class="stats">
+  <div class="stat"><div class="stat-label">סה"כ סריקות</div><div class="stat-val" id="total">0</div></div>
+  <div class="stat"><div class="stat-label">כרטיסים ייחודיים</div><div class="stat-val" id="unique">0</div></div>
+  <div class="stat"><div class="stat-label">סריקה אחרונה</div><div class="stat-val" id="last-time" style="font-size:16px;padding-top:6px;">—</div></div>
+</div>
+
+<!-- קוד אחרון -->
+<div class="scan-banner">
+  <div class="icon">🪪</div>
+  <div>
+    <div style="font-size:12px;color:#888;margin-bottom:4px;">קוד אחרון שנסרק</div>
+    <div class="scan-code" id="last-code">—</div>
+  </div>
+</div>
+
+<!-- טבלה -->
+<div class="card" style="padding:0;overflow:hidden;">
+  <div style="display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:1px solid #eee;">
+    <input type="text" id="search" placeholder="חפש קוד..." oninput="renderTable()" style="flex:1;" />
+    <button onclick="exportCSV()">ייצא CSV</button>
+    <button class="danger" onclick="clearAll()">נקה הכל</button>
+  </div>
+  <table>
+    <thead>
+      <tr><th>#</th><th>קוד כרטיס</th><th>שעה</th><th></th></tr>
+    </thead>
+    <tbody id="tbody">
+      <tr><td colspan="4" class="empty">אין נתונים — התחבר לקורא וקרב כרטיס</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+let allScans = [];
+let lastTotal = 0;
+let connected = false;
+let pollInterval = null;
+
+async function loadPorts() {
+  try {
+    const res = await fetch("http://localhost:8765/ports");
+    const ports = await res.json();
+    const sel = document.getElementById("port-select");
+    sel.innerHTML = ports.length
+      ? ports.map(p => `<option value="${p.device}">${p.device} — ${p.desc}</option>`).join("")
+      : `<option value="COM5">COM5</option>`;
+  } catch {
+    document.getElementById("port-select").innerHTML = `<option value="COM5">COM5</option>`;
+  }
+}
+
+async function connect() {
+  const port = document.getElementById("port-select").value || "COM5";
+  try {
+    await fetch("http://localhost:8765/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ port })
+    });
+    connected = true;
+    document.getElementById("dot").classList.add("connected");
+    document.getElementById("conn-status").textContent = `מחובר ל-${port}`;
+    document.getElementById("conn-status").style.color = "#16a34a";
+    if (!pollInterval) pollInterval = setInterval(pollScans, 800);
+  } catch {
+    alert("❌ לא ניתן להתחבר לשרת.\nוודא שהרצת את server.py");
+  }
+}
+
+async function pollScans() {
+  try {
+    const res = await fetch("http://localhost:8765/scans");
+    const data = await res.json();
+    if (data.total !== lastTotal) {
+      allScans = data.scans;
+      lastTotal = data.total;
+      document.getElementById("total").textContent = data.total;
+      document.getElementById("unique").textContent = [...new Set(data.scans.map(s => s.code))].length;
+      if (data.scans.length > 0) {
+        const latest = data.scans[0];
+        document.getElementById("last-time").textContent = latest.time;
+        const el = document.getElementById("last-code");
+        el.textContent = latest.code;
+        el.classList.remove("flash");
+        void el.offsetWidth;
+        el.classList.add("flash");
+      }
+      renderTable();
+    }
+  } catch {}
+}
+
+function renderTable() {
+  const q = document.getElementById("search").value.toLowerCase();
+  const filtered = allScans.filter(s => s.code.toLowerCase().includes(q));
+  const tbody = document.getElementById("tbody");
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">אין תוצאות</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered.map((s, i) => `
+    <tr>
+      <td style="color:#bbb">${s.n}</td>
+      <td style="font-family:monospace;font-size:13px">${s.code}
+        ${i === 0 ? '<span class="badge">חדש</span>' : ''}
+      </td>
+      <td style="color:#888;font-size:12px">${s.time}</td>
+      <td><button class="danger" style="padding:3px 8px;font-size:11px" onclick="deleteRow(${s.n})">מחק</button></td>
+    </tr>
+  `).join("");
+}
+
+function deleteRow(n) {
+  allScans = allScans.filter(s => s.n !== n);
+  renderTable();
+}
+
+function clearAll() {
+  if (!confirm("למחוק את כל הנתונים?")) return;
+  allScans = [];
+  lastTotal = 0;
+  document.getElementById("total").textContent = 0;
+  document.getElementById("unique").textContent = 0;
+  document.getElementById("last-time").textContent = "—";
+  document.getElementById("last-code").textContent = "—";
+  renderTable();
+}
+
+function exportCSV() {
+  const rows = [["מספר","קוד","שעה"], ...allScans.map(s => [s.n, s.code, s.time])];
+  const csv = rows.map(r => r.join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = "data:text/csv;charset=utf-8,\uFEFF" + encodeURIComponent(csv);
+  a.download = "gigatek_scans.csv";
+  a.click();
+}
+
+loadPorts();
+</script>
+</body>
+</html>
